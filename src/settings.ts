@@ -79,6 +79,8 @@ export interface BragiSettings {
 		legnext: string
 		tokenrouter: string
 		apimart: string
+		svrouterBaseUrl: string
+		svrouterToken: string
 			lumaToken: string
 			xai: string
 			dashscope: string
@@ -137,6 +139,8 @@ export const DEFAULT_SETTINGS: BragiSettings = {
 		legnext: '',
 		tokenrouter: '',
 		apimart: '',
+		svrouterBaseUrl: '',
+		svrouterToken: '',
 			lumaToken: '',
 			xai: '',
 			dashscope: '',

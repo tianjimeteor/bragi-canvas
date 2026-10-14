@@ -60,7 +60,7 @@ Use the MCP server only for trusted local clients that you want to let read or m
 
 ## Providers
 
-Bragi Canvas supports multiple provider integrations, including OpenAI, Anthropic, AWS Bedrock, Google Gemini (Gemini, Imagen, and Veo), Volcengine, BytePlus, Kling, fal.ai, ElevenLabs, MiniMax, Legnext, TokenRouter (`https://api.tokenrouter.com/v1`), APIMart, xAI, and Luma. Availability depends on the models and credentials configured in plugin settings.
+Bragi Canvas supports multiple provider integrations, including OpenAI, Anthropic, AWS Bedrock, Google Gemini (Gemini, Imagen, and Veo), Volcengine, BytePlus, Kling, fal.ai, ElevenLabs, MiniMax, Legnext, TokenRouter (`https://api.tokenrouter.com/v1`), APIMart, svrouter (configurable gateway), xAI, and Luma. Availability depends on the models and credentials configured in plugin settings.
 
 Provider credentials are stored by Obsidian in this plugin's local settings data. They are used only to make the provider requests selected by the user.
 
@@ -126,3 +126,20 @@ Release tags must be plain semantic versions such as `1.12.4`. Do not prefix tag
 ## License
 
 Bragi Canvas is licensed under the Mozilla Public License 2.0 (`MPL-2.0`). See [LICENSE](LICENSE).
+
+### svrouter gateway
+
+In **Settings → Bragi Canvas → Add a provider**, select **svrouter**, enter your gateway base URL (with or without `/v1`), and enter your **gateway token**. The connection test checks `/v1/models` without starting a generation. Upstream APIMart and Reactor credentials belong on the gateway/worker; do not paste them into the plugin.
+
+- **GPT Image 2.5 Flare** maps to `sv-gpt-image-2.5-flare`; **GPT Image 2.5 Sunburst** maps to `sv-gpt-image-2.5-sunburst`. Both support text prompts, up to 16 connected reference images, aspect ratios, 1K/2K/4K resolution, quality through `max`, transparent backgrounds, moderation, PNG/JPEG/WebP, and JPEG/WebP compression including `0`. Transparent backgrounds require PNG or WebP; JPEG combinations are rejected before uploads.
+- Image jobs use `POST /v1/images/tasks` and poll `GET /v1/images/tasks/{id}`. Each network request is short while the generation runs on the gateway. Bragi waits up to 20 minutes; if it times out, the error includes the task ID for inspection on the gateway. Closing Obsidian does not cancel the gateway task.
+- Local image references and a programmatic `mask_url` data URL use the existing Bragi temporary public storage relay. The upstream must be able to fetch those URLs. Provider-specific `asset://` IDs and private/local reference URLs are rejected. The gateway token is sent only to your gateway, never to the relay or an image download URL.
+- The UI follows the plugin's existing English-only language support. Through MCP/provider options, `size` can specify an exact pixel size (for example `1536x1024`), `resolution` overrides the UI's `imageSize`, and `mask_url` accepts a public HTTP(S) URL or supported image data URL. Mask editing requires an image reference.
+
+**Reactor Fast H3 Omni** maps to `sv-fast-h3-omni` and requires the gateway's official SDK worker bridge. It uses `POST /v1/videos`, the existing task queue polls `GET /v1/videos/{id}`, and completed MP4 files download from authenticated `/v1/videos/{id}/content`. This is a saved video workflow: each job starts an independent SDK session. If a pending task reloads while svrouter credentials are missing or its base URL is invalid, Bragi preserves the snapshot and generating placeholder, then retries resume on Canvas activation after valid credentials are restored.
+
+The video picker offers only the supported output durations (5.875, 8, 10.125, 12.25, and 14.375 seconds) and canvases (16:9, 1:1, 9:16, and 4:3). Native resolution, frame rate, and generated audio are fixed by the model. Connect up to nine image references and three audio references; audio references require at least one image. Reactor audio numbering follows the saved drag order in the Canvas audio strip, so `<Audio 1>` refers to the displayed first audio. First-frame mode pins the first image, and first/last-frame mode pins the first two ordered images, while retaining both as appearance references. Multi-image mode uses the ordered references without pinning endpoints. Video references and continuation between separate jobs are unsupported. References must be public HTTPS URLs; local images use the same temporary relay, and connected audio is uploaded through the existing audio reference flow. Programmatic `seed: 0` is preserved.
+
+Reactor charges by **GPU session wall time**, including generation/export work, rather than the selected output clip duration. Its upstream listed rate is $0.0125 per session second; the final gateway charge also depends on gateway pricing/group configuration. Clip length alone is not a fixed-price estimate. The provider form explains this distinction before configuration.
+
+For a local regression check, run `npm run test:svrouter`. The harness exercises the real plugin generation/resume paths, Canvas ordering helpers, registry, and providers against mocked Obsidian network and vault boundaries, with no live billable API calls.

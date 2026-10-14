@@ -16,6 +16,7 @@ import { ElevenLabsProvider } from './elevenlabs'
 import { MiniMaxProvider } from './minimax'
 import { LegnextProvider } from './legnext'
 import { APIMartProvider } from './apimart'
+import { SvRouterImageProvider, SvRouterVideoProvider, svrouterApiBase } from './svrouter'
 import { LumaProvider } from './luma'
 import { XAIImageProvider, XAIVideoProvider, XAIAudioProvider } from './xai'
 import { TokenRouterImageProvider, TokenRouterTextProvider, TokenRouterVideoProvider } from './tokenrouter'
@@ -412,6 +413,27 @@ export const PROVIDERS: ProviderSpec[] = [
 		makeText: ({ settings }) =>
 			new TokenRouterTextProvider(settings.providers.tokenrouter, 'https://api.tokenrouter.com/v1'),
 		testConnection: (d) => testListModels('https://api.tokenrouter.com/v1/models', d.tokenrouter || ''),
+	},
+	{
+		id: 'svrouter',
+		name: 'svrouter',
+		description: 'GPT Image 2.5 and Reactor Fast H3 Omni via your gateway token. Reactor is billed by GPU session time, not output duration.',
+		fields: [
+			{ key: 'svrouterBaseUrl', label: 'Gateway base URL', placeholder: 'https://your-gateway.example', type: 'text' },
+			{ key: 'svrouterToken', label: 'Gateway token', placeholder: 'sk-...', type: 'password' },
+		],
+		isConfigured: (s) => !!(s.providers.svrouterBaseUrl?.trim() && s.providers.svrouterToken?.trim()),
+		makeImage: ({ settings, app, outputDir }) =>
+			new SvRouterImageProvider(settings.providers.svrouterBaseUrl, settings.providers.svrouterToken, app, outputDir),
+		makeVideo: ({ settings, app, outputDir }) =>
+			new SvRouterVideoProvider(settings.providers.svrouterBaseUrl, settings.providers.svrouterToken, app, outputDir),
+		testConnection: async (d) => {
+			try {
+				return await testListModels(`${svrouterApiBase(d.svrouterBaseUrl || '')}/models`, d.svrouterToken || '')
+			} catch (err: unknown) {
+				return { ok: false, message: err instanceof Error ? err.message : String(err) }
+			}
+		},
 	},
 	{
 		id: 'apimart',

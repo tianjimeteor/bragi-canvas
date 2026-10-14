@@ -258,8 +258,7 @@ export default class BragiCanvas extends Plugin {
 			const isFirstSweep = !this.sweptCanvasPaths.has(canvasPath)
 			this.sweptCanvasPaths.add(canvasPath)
 			const ghostCount = sweepInterruptedPlaceholders(canvas, (id) =>
-				this.syncGenerating.has(id) ||
-				this.taskQueue.getSnapshots().some(s => s.placeholderNodeId === id)
+				this.isTrackedGeneratingPlaceholder(id, canvasPath)
 			)
 			if (ghostCount > 0 && isFirstSweep) {
 				new Notice(`Bragi: marked ${ghostCount} interrupted placeholder${ghostCount > 1 ? 's' : ''} red. Delete them when you're done reviewing.`)
@@ -445,7 +444,9 @@ export default class BragiCanvas extends Plugin {
 			// Read reference images in user-defined order (from thumbnail drag)
 			const uniqueImages = getOrderedImages(canvas, node)
 			const uniqueVideos = [...new Set(upstream.videos)]
-			const uniqueAudios = [...new Set(upstream.audios)]
+			const uniqueAudios = activeProvider === 'svrouter' && model.id === 'reactor-fast-h3-omni'
+				? [...new Set(getOrderedAudios(canvas, node))]
+				: [...new Set(upstream.audios)]
 			const uniquePdfs = [...new Set(upstream.pdfs)]
 
 			let refImages: string[] = []
@@ -468,6 +469,9 @@ export default class BragiCanvas extends Plugin {
 			} else {
 			// Seedance can consume provider-specific asset:// IDs.
 			const isSeedanceModel = model.id.startsWith('seedance')
+			const isReactorModel = activeProvider === 'svrouter' && model.id === 'reactor-fast-h3-omni'
+			if (isReactorModel && uniqueVideos.length) throw new Error('Reactor does not support reference videos or continuation between jobs.')
+			if (isReactorModel && uniqueAudios.length && !uniqueImages.length) throw new Error('Reactor audio references require a reference image.')
 			const isNativeSeedance = (activeProvider === 'bytedance' || activeProvider === 'byteplus') && isSeedanceModel
 			const supportsSeedanceRefs = isNativeSeedance || (activeProvider === 'tokenrouter' && isSeedanceModel)
 			const hasSeedanceMediaRefs = uniqueImages.length > 0 || uniqueAudios.length > 0 || uniqueVideos.length > 0
@@ -496,10 +500,10 @@ export default class BragiCanvas extends Plugin {
 				}
 			}
 
-			// Upload reference audios for Seedance
-			if (supportsSeedanceRefs && uniqueAudios.length > 0) {
+			// Upload reference audios for Seedance and Reactor
+			if ((supportsSeedanceRefs || isReactorModel) && uniqueAudios.length > 0) {
 				if (uniqueAudios.length > 3) {
-					throw new Error('Seedance supports up to 3 reference audio files.')
+					throw new Error(`${isReactorModel ? 'Reactor' : 'Seedance'} supports up to 3 reference audio files.`)
 				}
 				for (const audioPath of uniqueAudios) {
 					if (bytePlusCreds) {
@@ -954,12 +958,26 @@ export default class BragiCanvas extends Plugin {
 	}
 
 	async saveSettings() {
-		await this.saveData({ ...this.settings, _pendingTasks: this.taskQueue.getSnapshots() })
+		await this.saveData({ ...this.settings, _pendingTasks: this.pendingTasksForSave() })
+	}
+
+	private pendingTasksForSave(): TaskSnapshot[] {
+		const tasks = new Map(this.taskQueue.getSnapshots().map(s => [s.taskId, s]))
+		for (const snap of this.pendingTaskSnapshots) {
+			if (snap.providerName === 'svrouter' && !tasks.has(snap.taskId)) tasks.set(snap.taskId, snap)
+		}
+		return [...tasks.values()]
+	}
+
+	private isTrackedGeneratingPlaceholder(nodeId: string, canvasPath: string): boolean {
+		return this.syncGenerating.has(nodeId)
+			|| this.taskQueue.getSnapshots().some(s => s.placeholderNodeId === nodeId)
+			|| this.pendingTaskSnapshots.some(s => s.providerName === 'svrouter' && s.canvasPath === canvasPath && s.placeholderNodeId === nodeId)
 	}
 
 	private persistPendingTasks() {
-		// Fire-and-forget; keep _pendingTasks in sync with the queue.
-		void this.saveData({ ...this.settings, _pendingTasks: this.taskQueue.getSnapshots() }).catch(err => {
+		// Keep deferred svrouter snapshots while credentials are being restored.
+		void this.saveData({ ...this.settings, _pendingTasks: this.pendingTasksForSave() }).catch(err => {
 			console.error('Bragi Canvas: failed to persist pending tasks', err)
 		})
 	}
@@ -980,7 +998,10 @@ export default class BragiCanvas extends Plugin {
 	// Rebuild a VideoProvider from a snapshot (provider name + settings)
 	private buildVideoProvider(providerName: string, outputDir: string): VideoProvider | null {
 		const spec = getProvider(providerName)
-		return spec?.makeVideo?.({ settings: this.settings, app: this.app, outputDir }) ?? null
+		const make = () => spec?.makeVideo?.({ settings: this.settings, app: this.app, outputDir }) ?? null
+		if (providerName !== 'svrouter') return make()
+		if (!spec?.isConfigured(this.settings)) return null
+		try { return make() } catch { return null }
 	}
 
 	// Try to resume pending tasks whose canvas is now open.
@@ -996,7 +1017,7 @@ export default class BragiCanvas extends Plugin {
 
 		// Wait until the canvas has actually loaded nodes — otherwise we'd drop every snapshot as an orphan.
 		if (canvas.nodes.size === 0) return
-		this.resumedCanvasPaths.add(canvasPath)
+		const deferredTaskIds = new Set<string>()
 
 		let resumed = 0
 		let dropped = 0
@@ -1012,6 +1033,10 @@ export default class BragiCanvas extends Plugin {
 
 			const provider = this.buildVideoProvider(snap.providerName, snap.outputDir)
 			if (!provider || !provider.checkStatus) {
+				if (snap.providerName === 'svrouter') {
+					deferredTaskIds.add(snap.taskId)
+					continue
+				}
 				dropped++
 				continue
 			}
@@ -1030,8 +1055,9 @@ export default class BragiCanvas extends Plugin {
 			resumed++
 		}
 
-		// Drop orphans from snapshot list (queue now owns the live ones)
-		this.pendingTaskSnapshots = this.pendingTaskSnapshots.filter(s => s.canvasPath !== canvasPath)
+		// Queue owns resumed tasks; keep svrouter snapshots awaiting usable credentials.
+		this.pendingTaskSnapshots = this.pendingTaskSnapshots.filter(s => s.canvasPath !== canvasPath || deferredTaskIds.has(s.taskId))
+		if (deferredTaskIds.size === 0) this.resumedCanvasPaths.add(canvasPath)
 		this.persistPendingTasks()
 
 		if (resumed > 0) new Notice(`Resumed ${resumed} video generation${resumed > 1 ? 's' : ''}`)

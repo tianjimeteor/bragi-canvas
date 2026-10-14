@@ -64,3 +64,24 @@ export const gptImage: ModelConfig = {
 		},
 	],
 }
+
+/** Dedicated svrouter aliases keep Flare and Sunburst separate in the picker. */
+function gptImage25(id: string, name: string): ModelConfig {
+	return {
+		id, name, type: 'image',
+		supportedProviders: { svrouter: { apiModelId: `sv-${id}` } },
+		modes: ['text-to-image', 'image-ref-to-image'],
+		params: [
+			{ id: 'aspectRatio', label: 'Aspect ratio', type: 'select', options: GPT_IMAGE_RATIOS, default: '1:1' },
+			{ id: 'imageSize', label: 'Size', type: 'select', options: ['1K', '2K', '4K'].map(value => ({ label: value, value })), default: '2K' },
+			{ id: 'quality', label: 'Quality', type: 'select', options: ['auto', 'low', 'medium', 'high', 'xhigh', 'max'].map(value => ({ label: value, value })), default: 'auto' },
+			{ id: 'background', label: 'Background', type: 'select', options: ['auto', 'opaque', 'transparent'].map(value => ({ label: value, value })), default: 'auto' },
+			{ id: 'moderation', label: 'Moderation', type: 'select', options: ['auto', 'low'].map(value => ({ label: value, value })), default: 'auto' },
+			{ id: 'output_format', label: 'Output format', type: 'select', options: ['png', 'jpeg', 'webp'].map(value => ({ label: value.toUpperCase(), value })), default: 'png' },
+			{ id: 'output_compression', label: 'JPEG/WebP compression', type: 'range', min: 0, max: 100, step: 1, default: 100 },
+		],
+	}
+}
+
+export const gptImage25Flare = gptImage25('gpt-image-2.5-flare', 'GPT Image 2.5 Flare')
+export const gptImage25Sunburst = gptImage25('gpt-image-2.5-sunburst', 'GPT Image 2.5 Sunburst')
